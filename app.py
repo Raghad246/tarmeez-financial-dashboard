@@ -6,69 +6,56 @@ import plotly.graph_objects as go
 import yfinance as yf
 from datetime import date, timedelta
 
-# =============================
-# Page config + UI polish
-# =============================
+# -----------------------------
+# Page config + light styling
+# -----------------------------
 st.set_page_config(page_title="Saudi Market Snapshot (TASI)", layout="wide")
 
-CUSTOM_CSS = """
-<style>
-/* Make the app feel cleaner */
-.block-container { padding-top: 1.2rem; padding-bottom: 2rem; }
-div[data-testid="stMetric"] {
-    background: #ffffff;
-    padding: 14px 14px 10px 14px;
-    border-radius: 14px;
-    border: 1px solid rgba(0,0,0,0.06);
-    box-shadow: 0 4px 18px rgba(0,0,0,0.04);
-}
-h1, h2, h3 { letter-spacing: -0.2px; }
-.small-note { font-size: 0.92rem; color: rgba(0,0,0,0.6); }
-.badge {
-    display: inline-block;
-    padding: 5px 10px;
-    border-radius: 999px;
-    border: 1px solid rgba(0,0,0,0.08);
-    background: rgba(0,0,0,0.03);
-    font-size: 0.85rem;
-}
-</style>
-"""
-st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+st.markdown(
+    """
+    <style>
+      .small-note {color:#6b7280; font-size:0.9rem;}
+      .kpi-card {border:1px solid #eef0f3; padding:16px; border-radius:16px; background:white;}
+      .kpi-label {color:#6b7280; font-size:0.85rem; margin-bottom:6px;}
+      .kpi-value {font-size:1.65rem; font-weight:700;}
+      .pill {display:inline-block; padding:6px 10px; border:1px solid #eef0f3; border-radius:999px; background:#fafafa; margin-right:8px; font-size:0.85rem;}
+      .divider {height:1px; background:#eef0f3; margin:16px 0;}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 st.title("📈 Saudi Market Snapshot (TASI) — Live Financial Dashboard")
-st.caption("Live, interactive dashboard powered by Yahoo Finance. Built for Tarmeez Capital assessment.")
+st.caption("Live, interactive financial dashboard powered by Yahoo Finance. Built for Tarmeez Capital assessment.")
 
-# =============================
+# -----------------------------
 # Sidebar
-# =============================
+# -----------------------------
 st.sidebar.header("Filters")
 
-# Assets (Benchmark = TASI)
 tickers = {
     "TASI Index (Benchmark)": "^TASI.SR",
     "Al Rajhi Bank": "1120.SR",
     "Aramco": "2222.SR",
     "SABIC": "2010.SR",
-    "STC": "7010.SR"
+    "STC": "7010.SR",
 }
 
-default_assets = ["TASI Index (Benchmark)", "Al Rajhi Bank", "Aramco", "SABIC", "STC"]
+asset_names = list(tickers.keys())
 
 selected_assets = st.sidebar.multiselect(
     "Select Assets",
-    list(tickers.keys()),
-    default=default_assets
+    asset_names,
+    default=asset_names,
 )
 
 preset = st.sidebar.selectbox(
     "Quick range",
-    ["1M", "3M", "6M", "YTD", "1Y", "Custom"],
-    index=0
+    ["Custom", "1M", "3M", "6M", "YTD", "1Y"],
+    index=1,
 )
 
 today = date.today()
-
 if preset == "1M":
     start_date = today - timedelta(days=30)
 elif preset == "3M":
@@ -80,20 +67,14 @@ elif preset == "YTD":
 elif preset == "1Y":
     start_date = today - timedelta(days=365)
 else:
-    start_date = st.sidebar.date_input("Start date", date(today.year - 1, 1, 1))
+    start_date = st.sidebar.date_input("Start date", date(2023, 1, 1))
 
 end_date = st.sidebar.date_input("End date", today)
 
 st.sidebar.markdown("---")
-
 risk_free = st.sidebar.slider("Risk-free rate (annual, %)", 0.0, 10.0, 4.0, 0.25)
-roll_window = st.sidebar.slider("Rolling window (days)", 10, 120, 30, 5)
+roll_window = st.sidebar.slider("Rolling window (days)", 10, 90, 30, 5)
 
-st.sidebar.markdown("---")
-st.sidebar.markdown("**Portfolio Simulator**")
-use_portfolio = st.sidebar.toggle("Enable portfolio (weights)", value=True)
-
-# Validations
 if start_date >= end_date:
     st.sidebar.error("Start date must be earlier than end date.")
     st.stop()
@@ -102,19 +83,22 @@ if not selected_assets:
     st.warning("Please select at least one asset.")
     st.stop()
 
-# Ensure benchmark exists for advanced analytics
-if "TASI Index (Benchmark)" not in selected_assets:
-    st.info("Tip: Add **TASI Index (Benchmark)** to enable excess return, beta/alpha and benchmark comparison.")
-    
-# =============================
-# Data fetch (robust + cached)
-# =============================
+benchmark_name = "TASI Index (Benchmark)"
+if benchmark_name not in selected_assets:
+    st.sidebar.info("Tip: Include TASI benchmark for Beta/Alpha metrics.")
+
+# -----------------------------
+# Data fetch
+# -----------------------------
 @st.cache_data(show_spinner=False)
-def load_data(asset_names, start, end):
+def load_data(selected: list, start: date, end: date) -> pd.DataFrame:
     frames = []
-    for a in asset_names:
+    for a in selected:
         symbol = tickers[a]
-        data = yf.download(symbol, start=start, end=end, progress=False, auto_adjust=False)
+        try:
+            data = yf.download(symbol, start=start, end=end, progress=False, auto_adjust=False)
+        except Exception:
+            data = pd.DataFrame()
 
         if data is None or data.empty:
             continue
@@ -126,354 +110,378 @@ def load_data(asset_names, start, end):
         data = data.reset_index()
         data["Asset"] = a
 
-        # Keep minimal required columns
-        keep_cols = ["Date", "Close", "Volume", "Asset"]
-        for col in keep_cols:
+        # Ensure expected cols exist
+        for col in ["Date", "Close", "Volume"]:
             if col not in data.columns:
-                data[col] = pd.NA
-        data = data[keep_cols].copy()
+                data[col] = np.nan
 
+        data = data[["Date", "Close", "Volume", "Asset"]].copy()
         data["Close"] = pd.to_numeric(data["Close"], errors="coerce")
         data["Volume"] = pd.to_numeric(data["Volume"], errors="coerce")
-
         frames.append(data)
 
     if not frames:
         return pd.DataFrame(columns=["Date", "Close", "Volume", "Asset"])
+    return pd.concat(frames, ignore_index=True)
 
-    df = pd.concat(frames, ignore_index=True)
-    df = df.dropna(subset=["Date"]).sort_values("Date")
-    return df
-
-with st.spinner("Fetching data..."):
-    df = load_data(selected_assets, start_date, end_date)
+df = load_data(selected_assets, start_date, end_date)
 
 if df.empty:
     st.warning("No data returned for the selected period. Try a different range.")
     st.stop()
 
-# =============================
-# Transformations
-# =============================
+df = df.dropna(subset=["Date"]).sort_values("Date").copy()
+
 prices = (
     df.pivot_table(index="Date", columns="Asset", values="Close", aggfunc="last")
       .sort_index()
       .dropna(how="all")
 )
 
-if prices.shape[0] < 5:
-    st.warning("Not enough data points for robust analytics. Try a longer range (e.g., 3M or 6M).")
+if prices.shape[0] < 3:
+    st.warning("Not enough data points in this period. Try a longer range.")
     st.stop()
 
 returns = prices.pct_change().dropna(how="all")
+rf_daily = (risk_free / 100) / 252.0
 
-# Helper metrics
 latest_prices = prices.iloc[-1]
-avg_latest_price = float(latest_prices.dropna().mean()) if latest_prices.dropna().shape[0] else np.nan
-total_volume = float(df["Volume"].dropna().sum()) if df["Volume"].dropna().shape[0] else 0.0
+avg_latest_price = float(np.nanmean(latest_prices.values))
+total_volume = float(df["Volume"].dropna().sum())
 
-total_return_pct = (prices.iloc[-1] / prices.iloc[0] - 1) * 100
+# Total return %
+total_return = (prices.iloc[-1] / prices.iloc[0] - 1) * 100
 
-# Annualized vol (252 trading days assumption)
-ann_vol_pct = returns.std() * np.sqrt(252) * 100
+# Volatility (annualized)
+vol_ann = returns.std() * np.sqrt(252) * 100
 
-# Drawdown
-cum = (1 + returns).cumprod()
-drawdown = (cum / cum.cummax() - 1) * 100
-max_drawdown_pct = drawdown.min()
-
-# Sharpe (annualized) - using daily rf
-rf_daily = (risk_free / 100) / 252
+# Sharpe (annualized)
 excess_daily = returns.sub(rf_daily)
-sharpe = (excess_daily.mean() / returns.std()) * np.sqrt(252)
+sharpe_ann = (excess_daily.mean() / returns.std()) * np.sqrt(252)
+sharpe_ann = sharpe_ann.replace([np.inf, -np.inf], np.nan)
 
-# Summary table
-summary = pd.DataFrame({
-    "Latest Price": latest_prices.round(2),
-    "Total Return %": total_return_pct.round(2),
-    "Volatility % (ann)": ann_vol_pct.round(2),
-    "Sharpe (ann)": sharpe.round(2),
-    "Max Drawdown %": max_drawdown_pct.round(2),
-}).sort_values("Total Return %", ascending=False)
+# Max drawdown
+cum = (1 + returns).cumprod()
+dd = (cum / cum.cummax() - 1) * 100
+max_dd = dd.min()
 
-# Normalized (Base=100)
-normalized = prices.div(prices.iloc[0]).mul(100)
+# Beta/Alpha vs benchmark (if benchmark exists)
+beta = pd.Series(index=prices.columns, dtype=float)
+alpha_ann = pd.Series(index=prices.columns, dtype=float)
+excess_vs_bm = pd.Series(index=prices.columns, dtype=float)
 
-# Benchmark analytics (beta/alpha/excess)
-benchmark_name = "TASI Index (Benchmark)"
-has_bench = benchmark_name in returns.columns and returns[benchmark_name].dropna().shape[0] >= 10
+if benchmark_name in returns.columns:
+    bm = returns[benchmark_name].dropna()
+    var_bm = float(np.nanvar(bm.values, ddof=1)) if bm.shape[0] > 2 else np.nan
 
-beta = pd.Series(index=returns.columns, dtype=float)
-alpha_ann = pd.Series(index=returns.columns, dtype=float)
-
-if has_bench:
-    bench = returns[benchmark_name].dropna()
     for col in returns.columns:
-        if col == benchmark_name:
-            beta[col] = 1.0
-            alpha_ann[col] = 0.0
-            continue
-        aligned = pd.concat([returns[col], bench], axis=1).dropna()
-        if aligned.shape[0] < 10:
+        r = returns[col].dropna()
+        aligned = pd.concat([r, bm], axis=1, join="inner").dropna()
+        if aligned.shape[0] < 5 or not np.isfinite(var_bm) or var_bm == 0:
             beta[col] = np.nan
             alpha_ann[col] = np.nan
+            excess_vs_bm[col] = np.nan
             continue
-        r_i = aligned.iloc[:, 0]
-        r_m = aligned.iloc[:, 1]
-        cov = np.cov(r_i, r_m, ddof=1)[0, 1]
-        var = np.var(r_m, ddof=1)
-        b = cov / var if var != 0 else np.nan
-        beta[col] = b
-        # annualized alpha approximation: (mean_i - rf) - beta*(mean_m - rf) then *252
-        alpha_daily = (r_i.mean() - rf_daily) - b * (r_m.mean() - rf_daily)
-        alpha_ann[col] = alpha_daily * 252
 
+        cov = float(np.cov(aligned.iloc[:, 0].values, aligned.iloc[:, 1].values, ddof=1)[0, 1])
+        b = cov / var_bm
+        beta[col] = b
+
+        # alpha (annualized): mean(r - (rf + beta*(bm - rf))) * 252
+        r_excess = aligned.iloc[:, 0] - rf_daily
+        bm_excess = aligned.iloc[:, 1] - rf_daily
+        alpha_daily = float(np.nanmean((r_excess - b * bm_excess).values))
+        alpha_ann[col] = alpha_daily * 252.0
+
+        # excess return vs benchmark (total return diff)
+        excess_vs_bm[col] = float(total_return[col] - total_return[benchmark_name])
+
+# VaR / CVaR (parametric-free using historical, daily)
+def var_cvar(series: pd.Series, level=0.95):
+    x = series.dropna().values
+    if x.size < 10:
+        return np.nan, np.nan
+    q = np.quantile(x, 1 - level)  # e.g., 5% quantile
+    cvar = x[x <= q].mean() if np.any(x <= q) else np.nan
+    return q, cvar
+
+var95 = pd.Series(index=returns.columns, dtype=float)
+cvar95 = pd.Series(index=returns.columns, dtype=float)
+for col in returns.columns:
+    v, cv = var_cvar(returns[col], 0.95)
+    var95[col] = v * 100
+    cvar95[col] = cv * 100
+
+summary = pd.DataFrame({
+    "Latest Price": latest_prices.round(2),
+    "Total Return %": total_return.round(2),
+    "Volatility % (ann)": vol_ann.round(2),
+    "Sharpe (ann)": sharpe_ann.round(2),
+    "Max Drawdown %": max_dd.round(2),
+    "VaR 95% (daily)": var95.round(2),
+    "CVaR 95% (daily)": cvar95.round(2),
+})
+
+if benchmark_name in returns.columns:
     summary["Beta vs TASI"] = beta.round(2)
     summary["Alpha (ann)"] = alpha_ann.round(2)
+    summary["Excess Return vs TASI %"] = excess_vs_bm.round(2)
 
-# Excess return vs benchmark
-excess_return_pct = None
-if has_bench:
-    excess_return_pct = (total_return_pct - total_return_pct[benchmark_name]).round(2)
+summary = summary.sort_values("Total Return %", ascending=False)
 
-# Rolling volatility (annualized)
-rolling_vol = returns.rolling(roll_window).std() * np.sqrt(252) * 100
+normalized = prices.div(prices.iloc[0]).mul(100)
 
-# =============================
-# KPIs Row
-# =============================
-k1, k2, k3, k4 = st.columns(4)
-k1.metric("Assets Selected", len(selected_assets))
-k2.metric("Average Latest Price (SAR)", f"{avg_latest_price:,.2f}" if np.isfinite(avg_latest_price) else "—")
-k3.metric("Total Volume", f"{int(total_volume):,}" if np.isfinite(total_volume) else "—")
-k4.metric("Period", f"{prices.index.min().date()} → {prices.index.max().date()}")
+# -----------------------------
+# Top KPIs (cards)
+# -----------------------------
+c1, c2, c3, c4 = st.columns(4)
+c1.markdown(f"""<div class="kpi-card"><div class="kpi-label">Assets Selected</div><div class="kpi-value">{len(selected_assets)}</div></div>""", unsafe_allow_html=True)
+c2.markdown(f"""<div class="kpi-card"><div class="kpi-label">Average Latest Price (SAR)</div><div class="kpi-value">{avg_latest_price:,.2f}</div></div>""", unsafe_allow_html=True)
+c3.markdown(f"""<div class="kpi-card"><div class="kpi-label">Total Volume</div><div class="kpi-value">{int(total_volume):,}</div></div>""", unsafe_allow_html=True)
+c4.markdown(f"""<div class="kpi-card"><div class="kpi-label">Period</div><div class="kpi-value">{prices.index.min().date()} → {prices.index.max().date()}</div></div>""", unsafe_allow_html=True)
 
 st.markdown(
-    f'<span class="badge">Risk-free: {risk_free:.2f}%</span> &nbsp; '
-    f'<span class="badge">Rolling window: {roll_window}d</span>',
+    f"""
+    <div style="margin-top:10px;">
+      <span class="pill">Risk-free: {risk_free:.2f}%</span>
+      <span class="pill">Rolling window: {roll_window}d</span>
+      <span class="pill">Last refresh: {pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")}</span>
+    </div>
+    """,
     unsafe_allow_html=True
 )
 
-st.divider()
+st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
-# =============================
+# -----------------------------
 # Tabs
-# =============================
+# -----------------------------
 tab_overview, tab_perf, tab_risk, tab_port, tab_data = st.tabs(
     ["Overview", "Performance", "Risk", "Portfolio", "Data"]
 )
 
-# -----------------------------
-# Overview
-# -----------------------------
+# -------- Overview --------
 with tab_overview:
-    c1, c2 = st.columns([2.2, 1])
+    left, right = st.columns([2, 1])
 
-    with c1:
+    with left:
         fig_price = px.line(
             df.dropna(subset=["Close"]),
-            x="Date", y="Close", color="Asset",
+            x="Date",
+            y="Close",
+            color="Asset",
             title="Price Trend",
             labels={"Close": "Closing Price (SAR)"}
         )
-        fig_price.update_layout(legend_title_text="Asset", height=420)
         st.plotly_chart(fig_price, use_container_width=True)
 
-    with c2:
+    with right:
         rank = latest_prices.dropna().sort_values(ascending=False).reset_index()
         rank.columns = ["Asset", "Latest Price"]
         fig_rank = px.bar(rank, x="Latest Price", y="Asset", orientation="h", title="Latest Price Ranking")
-        fig_rank.update_layout(height=420)
         st.plotly_chart(fig_rank, use_container_width=True)
 
-    st.markdown("### Quick Snapshot")
-    snap = summary.copy()
-    if has_bench:
-        snap["Excess Return vs TASI %"] = excess_return_pct
-    st.dataframe(snap, use_container_width=True)
+    st.subheader("Quick Snapshot")
+    st.dataframe(summary, use_container_width=True, height=280)
 
-# -----------------------------
-# Performance
-# -----------------------------
+# -------- Performance --------
 with tab_perf:
-    st.subheader("Normalized Performance (Base = 100)")
     fig_norm = px.line(normalized, title="Normalized Performance (Base = 100)")
-    fig_norm.update_layout(height=420)
     st.plotly_chart(fig_norm, use_container_width=True)
 
-    if has_bench:
-        st.subheader("Excess Return vs TASI (Cumulative, %)")
-        # cumulative excess: (asset cum return - bench cum return)
-        cum_ret = (prices / prices.iloc[0] - 1) * 100
-        excess_cum = cum_ret.sub(cum_ret[benchmark_name], axis=0).drop(columns=[benchmark_name], errors="ignore")
+    # Rolling Sharpe (approx)
+    st.subheader("Rolling Metrics")
+    cols = st.columns(2)
 
-        fig_ex = px.line(excess_cum, title="Excess Return vs TASI (Cumulative, %)")
-        fig_ex.update_layout(height=420)
-        st.plotly_chart(fig_ex, use_container_width=True)
-    else:
-        st.info("Add **TASI Index (Benchmark)** to see excess-return analytics.")
-
-# -----------------------------
-# Risk
-# -----------------------------
-with tab_risk:
-    c1, c2 = st.columns(2)
-
-    with c1:
-        st.subheader("Rolling Volatility (Annualized %)")
-        fig_rv = px.line(rolling_vol, title=f"Rolling Volatility — {roll_window} Days")
-        fig_rv.update_layout(height=420)
+    with cols[0]:
+        roll_vol = returns.rolling(roll_window).std() * np.sqrt(252) * 100
+        fig_rv = px.line(roll_vol, title=f"Rolling Volatility (ann, {roll_window}d)")
         st.plotly_chart(fig_rv, use_container_width=True)
 
+    with cols[1]:
+        roll_sh = (returns.sub(rf_daily).rolling(roll_window).mean() / returns.rolling(roll_window).std()) * np.sqrt(252)
+        fig_rs = px.line(roll_sh, title=f"Rolling Sharpe (ann, {roll_window}d)")
+        st.plotly_chart(fig_rs, use_container_width=True)
+
+# -------- Risk --------
+with tab_risk:
+    c1, c2 = st.columns(2)
+    with c1:
+        fig_vol = px.bar(summary.reset_index().rename(columns={"index": "Asset"}), x="Asset", y="Volatility % (ann)", title="Annualized Volatility (Risk)")
+        st.plotly_chart(fig_vol, use_container_width=True)
     with c2:
-        st.subheader("Max Drawdown (%) over time")
-        fig_dd = px.line(drawdown, title="Drawdown (%)")
-        fig_dd.update_layout(height=420)
+        fig_dd = px.bar(summary.reset_index().rename(columns={"index": "Asset"}), x="Asset", y="Max Drawdown %", title="Maximum Drawdown")
         st.plotly_chart(fig_dd, use_container_width=True)
 
-    st.subheader("Correlation Matrix (Diversification)")
+    st.subheader("Diversification View (Correlation)")
     corr = returns.corr()
-
     fig_corr = px.imshow(
         corr,
         text_auto=True,
         aspect="auto",
-        title="Correlation Heatmap"
+        title="Correlation Heatmap (Daily Returns)",
     )
-    fig_corr.update_layout(height=520)
     st.plotly_chart(fig_corr, use_container_width=True)
 
-    st.subheader("Risk Metrics Table")
-    risk_cols = ["Volatility % (ann)", "Sharpe (ann)", "Max Drawdown %"]
-    if has_bench:
-        risk_cols += ["Beta vs TASI", "Alpha (ann)"]
-    st.dataframe(summary[risk_cols].sort_values("Sharpe (ann)", ascending=False), use_container_width=True)
+    st.subheader("Tail Risk (Daily)")
+    tail = summary[["VaR 95% (daily)", "CVaR 95% (daily)"]].copy()
+    fig_tail = px.bar(
+        tail.reset_index().rename(columns={"index": "Asset"}),
+        x="Asset",
+        y=["VaR 95% (daily)", "CVaR 95% (daily)"],
+        barmode="group",
+        title="VaR vs CVaR (95%) — downside risk estimate"
+    )
+    st.plotly_chart(fig_tail, use_container_width=True)
 
-# -----------------------------
-# Portfolio
-# -----------------------------
+# -------- Portfolio --------
 with tab_port:
-    if not use_portfolio:
-        st.info("Portfolio simulator is disabled from sidebar.")
+    st.write("Build and compare portfolios (random optimizer). This demonstrates risk/return understanding beyond single-asset charts.")
+
+    # Use returns columns only with enough data
+    usable_assets = [c for c in returns.columns if returns[c].dropna().shape[0] >= 10]
+    ret_mat = returns[usable_assets].dropna()
+
+    if ret_mat.shape[0] < 15 or len(usable_assets) < 2:
+        st.warning("Not enough clean data for portfolio simulation. Try a longer range or select more assets.")
     else:
-        st.subheader("Portfolio Simulator (Weights)")
+        n = len(usable_assets)
+        mean_daily = ret_mat.mean()
+        cov_daily = ret_mat.cov()
 
-        # Choose investable assets (exclude benchmark by default from portfolio)
-        investable = [a for a in selected_assets if a != benchmark_name]
-        if len(investable) < 1:
-            st.warning("Select at least one non-benchmark asset to build a portfolio.")
-            st.stop()
+        sims = st.slider("Number of simulated portfolios", 200, 5000, 1500, 100)
+        rng = np.random.default_rng(42)
 
-        st.caption("Set weights — the app will auto-normalize if the sum is not 100%.")
+        W = rng.random((sims, n))
+        W = W / W.sum(axis=1, keepdims=True)
 
-        weights = {}
-        cols = st.columns(min(5, len(investable)))
-        for i, a in enumerate(investable):
-            with cols[i % len(cols)]:
-                weights[a] = st.slider(a, 0, 100, int(100 / len(investable)))
+        # Portfolio daily mean/std
+        port_mean = W @ mean_daily.values
+        port_var = np.einsum("ij,jk,ik->i", W, cov_daily.values, W)
+        port_std = np.sqrt(port_var)
 
-        w = pd.Series(weights, dtype=float)
-        if w.sum() == 0:
-            st.warning("Set at least one weight above 0%.")
-            st.stop()
-        w = w / w.sum()
+        port_ret_ann = port_mean * 252 * 100
+        port_vol_ann = port_std * np.sqrt(252) * 100
+        port_sharpe = ((port_mean - rf_daily) / port_std) * np.sqrt(252)
 
-        # Build portfolio returns (aligned)
-        port_returns = returns[investable].dropna(how="all").fillna(0).dot(w)
-        port_prices = (1 + port_returns).cumprod()
+        best_idx = np.nanargmax(port_sharpe)
+        minvol_idx = np.nanargmin(port_vol_ann)
 
-        # Benchmark comparison
-        if has_bench:
-            bench_ret = returns[benchmark_name].reindex(port_returns.index).fillna(0)
-            bench_cum = (1 + bench_ret).cumprod()
-        else:
-            bench_cum = None
+        best_w = W[best_idx]
+        minvol_w = W[minvol_idx]
 
-        # Portfolio metrics
-        port_total = (port_prices.iloc[-1] / port_prices.iloc[0] - 1) * 100
-        port_vol = port_returns.std() * np.sqrt(252) * 100
-        port_sharpe = ((port_returns.mean() - rf_daily) / port_returns.std()) * np.sqrt(252) if port_returns.std() != 0 else np.nan
+        frontier_df = pd.DataFrame({
+            "Return % (ann)": port_ret_ann,
+            "Volatility % (ann)": port_vol_ann,
+            "Sharpe (ann)": port_sharpe,
+        })
 
-        # Drawdown
-        port_cum = (1 + port_returns).cumprod()
-        port_dd = (port_cum / port_cum.cummax() - 1) * 100
-        port_mdd = port_dd.min()
+        fig_frontier = px.scatter(
+            frontier_df,
+            x="Volatility % (ann)",
+            y="Return % (ann)",
+            color="Sharpe (ann)",
+            title="Efficient Frontier (Random Simulation)",
+        )
+        # Highlight best Sharpe and min-vol
+        fig_frontier.add_trace(go.Scatter(
+            x=[port_vol_ann[best_idx]], y=[port_ret_ann[best_idx]],
+            mode="markers", name="Max Sharpe",
+            marker=dict(size=14, symbol="star")
+        ))
+        fig_frontier.add_trace(go.Scatter(
+            x=[port_vol_ann[minvol_idx]], y=[port_ret_ann[minvol_idx]],
+            mode="markers", name="Min Vol",
+            marker=dict(size=12, symbol="diamond")
+        ))
+        st.plotly_chart(fig_frontier, use_container_width=True)
 
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Portfolio Total Return %", f"{port_total:.2f}")
-        m2.metric("Portfolio Volatility % (ann)", f"{port_vol:.2f}")
-        m3.metric("Portfolio Sharpe (ann)", f"{port_sharpe:.2f}" if np.isfinite(port_sharpe) else "—")
-        m4.metric("Portfolio Max Drawdown %", f"{port_mdd:.2f}")
+        def weights_table(weights, label):
+            out = pd.DataFrame({"Asset": usable_assets, "Weight": weights})
+            out["Weight"] = (out["Weight"] * 100).round(2)
+            out = out.sort_values("Weight", ascending=False).reset_index(drop=True)
+            st.subheader(label)
+            st.dataframe(out, use_container_width=True, height=220)
+            return out
 
-        # Chart: portfolio vs benchmark
-        chart_df = pd.DataFrame({"Portfolio": port_cum * 100})
-        if bench_cum is not None:
-            chart_df["TASI (Benchmark)"] = bench_cum * 100
+        a, b = st.columns(2)
+        with a:
+            best_tbl = weights_table(best_w, "Max Sharpe Portfolio (weights %)")
+        with b:
+            minvol_tbl = weights_table(minvol_w, "Min Volatility Portfolio (weights %)")
 
-        fig_port = px.line(chart_df, title="Portfolio vs Benchmark (Indexed)")
-        fig_port.update_layout(height=440)
-        st.plotly_chart(fig_port, use_container_width=True)
+        # Compare growth of $1
+        st.subheader("Growth Comparison (Base = 1.0)")
+        base = (1 + ret_mat).cumprod()
 
-        fig_pdd = px.line(port_dd, title="Portfolio Drawdown (%)")
-        fig_pdd.update_layout(height=360)
-        st.plotly_chart(fig_pdd, use_container_width=True)
+        # Equal-weight
+        ew = np.repeat(1 / n, n)
+        ew_series = (1 + (ret_mat @ ew)).cumprod()
 
-        st.subheader("Weights")
-        w_df = (w * 100).round(2).reset_index()
-        w_df.columns = ["Asset", "Weight %"]
-        st.dataframe(w_df, use_container_width=True)
+        best_series = (1 + (ret_mat @ best_w)).cumprod()
+        minvol_series = (1 + (ret_mat @ minvol_w)).cumprod()
 
-# -----------------------------
-# Data
-# -----------------------------
+        comp = pd.DataFrame({
+            "Equal-weight": ew_series,
+            "Max Sharpe": best_series,
+            "Min Vol": minvol_series,
+        }, index=ret_mat.index)
+
+        if benchmark_name in comp.columns:
+            pass
+
+        fig_comp = px.line(comp, title="Portfolio Growth (Base=1)")
+        st.plotly_chart(fig_comp, use_container_width=True)
+
+        st.markdown('<p class="small-note">Note: Optimizer uses random simulation (robust for assessments, avoids heavy dependencies). Results vary slightly with data range.</p>', unsafe_allow_html=True)
+
+# -------- Data --------
 with tab_data:
+    st.subheader("Data Quality")
+    coverage = pd.DataFrame({
+        "Asset": prices.columns,
+        "Non-null price points": [int(prices[c].notna().sum()) for c in prices.columns],
+        "Missing price points": [int(prices[c].isna().sum()) for c in prices.columns],
+    }).sort_values("Non-null price points", ascending=False)
+    st.dataframe(coverage, use_container_width=True, height=200)
+
     st.subheader("Raw Data (Sample)")
     st.dataframe(df.head(800), use_container_width=True)
 
-    st.subheader("Download")
     csv = df.to_csv(index=False).encode("utf-8")
-    st.download_button("Download Raw CSV", csv, "market_data.csv", "text/csv")
+    st.download_button("Download CSV", csv, "market_data.csv", "text/csv")
 
-    summary_csv = summary.reset_index().rename(columns={"index": "Asset"}).to_csv(index=False).encode("utf-8")
-    st.download_button("Download Metrics CSV", summary_csv, "metrics_summary.csv", "text/csv")
-
-# =============================
-# Key Insights (judge-friendly)
-# =============================
-st.divider()
+# -----------------------------
+# Auto Insights (Storytelling)
+# -----------------------------
+st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 st.subheader("Key Insights (Auto-generated)")
 
-best = summary["Total Return %"].idxmax()
-worst = summary["Total Return %"].idxmin()
-highest_risk = summary["Volatility % (ann)"].idxmax()
+best_asset = summary["Total Return %"].idxmax()
+worst_asset = summary["Total Return %"].idxmin()
+highest_vol = summary["Volatility % (ann)"].idxmax()
 best_sharpe = summary["Sharpe (ann)"].idxmax()
 
-st.write(f"✅ **Best performer (Total Return):** **{best}** ({summary.loc[best,'Total Return %']}%).")
-st.write(f"⚠️ **Worst performer (Total Return):** **{worst}** ({summary.loc[worst,'Total Return %']}%).")
-st.write(f"📌 **Highest volatility (Risk):** **{highest_risk}** ({summary.loc[highest_risk,'Volatility % (ann)']}%).")
-st.write(f"🏅 **Best risk-adjusted return (Sharpe):** **{best_sharpe}** ({summary.loc[best_sharpe,'Sharpe (ann)']}).")
+st.write(f"✅ **Best performer (Total Return):** {best_asset} ({summary.loc[best_asset,'Total Return %']}%).")
+st.write(f"⚠️ **Worst performer (Total Return):** {worst_asset} ({summary.loc[worst_asset,'Total Return %']}%).")
+st.write(f"📌 **Highest volatility (Risk):** {highest_vol} ({summary.loc[highest_vol,'Volatility % (ann)']}%).")
+st.write(f"🏅 **Best risk-adjusted return (Sharpe):** {best_sharpe} ({summary.loc[best_sharpe,'Sharpe (ann)']}).")
 
-if has_bench:
-    # Outperformance vs benchmark
-    non_bench = summary.drop(index=[benchmark_name], errors="ignore").copy()
-    non_bench["Excess Return vs TASI %"] = excess_return_pct.drop(index=[benchmark_name], errors="ignore")
-    top_excess = non_bench["Excess Return vs TASI %"].idxmax()
-    st.write(
-        f"📈 **Top outperformance vs TASI:** **{top_excess}** "
-        f"({non_bench.loc[top_excess,'Excess Return vs TASI %']}% excess return)."
-    )
+if benchmark_name in summary.columns or benchmark_name in returns.columns:
+    if benchmark_name in returns.columns:
+        ex = summary.get("Excess Return vs TASI %", pd.Series(dtype=float))
+        if not ex.empty and ex.dropna().shape[0] > 0:
+            top_ex = ex.dropna().idxmax()
+            st.write(f"📈 **Top outperformance vs TASI:** {top_ex} ({ex.loc[top_ex]}% excess return).")
 
-    # Beta insight
     if "Beta vs TASI" in summary.columns:
-        highest_beta = summary["Beta vs TASI"].dropna().idxmax()
-        st.write(
-            f"🧠 **Market sensitivity:** **{highest_beta}** has the highest **Beta** vs TASI "
-            f"({summary.loc[highest_beta,'Beta vs TASI']})."
-        )
+        bmax = summary["Beta vs TASI"].dropna()
+        if bmax.shape[0] > 0:
+            most_sensitive = bmax.idxmax()
+            st.write(f"🧠 **Market sensitivity:** {most_sensitive} has the highest Beta vs TASI ({summary.loc[most_sensitive,'Beta vs TASI']}).")
 
 st.markdown(
-    '<div class="small-note">ℹ️ Volatility reflects price fluctuation (risk). '
-    'Sharpe compares return per unit of risk. Correlation helps assess diversification. '
-    'Beta/Alpha are measured relative to the benchmark (TASI).</div>',
+    '<p class="small-note">Volatility reflects price fluctuation (risk). Sharpe compares return per unit of risk. Correlation helps assess diversification. Beta/Alpha are measured relative to the benchmark (TASI).</p>',
     unsafe_allow_html=True
 )
+st.markdown('<p class="small-note"><b>Disclaimer:</b> Educational dashboard for assessment purposes only (not investment advice).</p>', unsafe_allow_html=True)
