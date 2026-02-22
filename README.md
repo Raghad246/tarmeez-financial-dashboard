@@ -1,5 +1,6 @@
 # Saudi Market Snapshot (TASI) — Executive Financial Dashboard
-
+Built by: Raghad Alshammari
+Data Analyst Assessment – Tarmeez Capital
 ## Project Overview
 
 This project presents a live executive-level financial dashboard analyzing selected Saudi market assets including TASI (benchmark), Al Rajhi Bank, Aramco, SABIC, and STC.
