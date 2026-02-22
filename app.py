@@ -143,9 +143,13 @@ st.markdown(
 # ------------------------------------------------
 @st.cache_data(show_spinner=False)
 def load_data(selected_assets, start, end):
+    # yfinance end is "exclusive" sometimes; adding 1 day reduces empty-last-day issues
+    end_plus = end + timedelta(days=1)
+
     all_data = []
     for asset in selected_assets:
-        data = yf.download(tickers[asset], start=start, end=end, progress=False)
+        data = yf.download(tickers[asset], start=start, end=end_plus, progress=False)
+
         if data is None or data.empty:
             continue
 
@@ -222,15 +226,21 @@ beta = pd.Series(index=returns.columns, dtype=float)
 alpha = pd.Series(index=returns.columns, dtype=float)
 
 if bench_name:
-    bench = returns[bench_name].dropna()
-    bench_var = bench.var()
     for col in returns.columns:
+        # IMPORTANT FIX: don't compute cov/var with duplicated benchmark column
+        if col == bench_name:
+            beta[col] = 1.0
+            alpha[col] = 0.0
+            continue
+
         aligned = returns[[col, bench_name]].dropna()
-        if aligned.empty or bench_var == 0:
+        bench_var_local = aligned[bench_name].var()
+
+        if aligned.empty or bench_var_local == 0 or pd.isna(bench_var_local):
             beta[col] = np.nan
             alpha[col] = np.nan
         else:
-            b = aligned[col].cov(aligned[bench_name]) / aligned[bench_name].var()
+            b = aligned[col].cov(aligned[bench_name]) / bench_var_local
             # alpha (annualized) = (mean_asset - rf) - beta*(mean_bench - rf)
             a = ((aligned[col].mean() - rf_daily) - b * (aligned[bench_name].mean() - rf_daily)) * 252
             beta[col] = b
@@ -304,7 +314,6 @@ with tab1:
     st.subheader("Quick Snapshot")
     st.dataframe(summary.sort_values("Total Return %", ascending=False), use_container_width=True)
 
-    # Top diversifiers (lowest correlation pairs)
     st.subheader("Top Diversifiers (lowest correlation pairs)")
     corr_upper = correlation.where(np.triu(np.ones(correlation.shape), k=1).astype(bool)).stack().sort_values()
     if not corr_upper.empty:
@@ -321,14 +330,12 @@ with tab2:
     fig_norm.update_layout(margin=dict(l=10, r=10, t=55, b=10), title_font=dict(size=18), legend_title_text="")
     st.plotly_chart(fig_norm, use_container_width=True)
 
-    # Rolling Volatility
     st.subheader(f"Rolling Volatility (ann) — {rolling_window}d")
     roll_vol = returns.rolling(rolling_window).std() * np.sqrt(252) * 100
     fig_rv = px.line(roll_vol.dropna(how="all"), title=f"Rolling Volatility ({rolling_window}d)")
     fig_rv.update_layout(margin=dict(l=10, r=10, t=55, b=10), title_font=dict(size=18), legend_title_text="")
     st.plotly_chart(fig_rv, use_container_width=True)
 
-    # Rolling Sharpe
     st.subheader(f"Rolling Sharpe (ann) — {rolling_window}d")
     roll_mean = returns.rolling(rolling_window).mean()
     roll_std = returns.rolling(rolling_window).std()
@@ -344,7 +351,6 @@ with tab3:
     fig_corr.update_layout(margin=dict(l=10, r=10, t=55, b=10), title_font=dict(size=18))
     st.plotly_chart(fig_corr, use_container_width=True)
 
-    # Rolling Beta vs TASI
     st.subheader(f"Rolling Beta vs TASI — {rolling_window}d")
     if bench_name and len(returns.columns) >= 2:
         bench = returns[bench_name]
@@ -375,7 +381,6 @@ with tab3:
         fig_dd.update_layout(margin=dict(l=10, r=10, t=55, b=10), title_font=dict(size=18))
         st.plotly_chart(fig_dd, use_container_width=True)
 
-    # VaR / CVaR view
     st.subheader("Downside Risk (VaR / CVaR)")
     show_risk = summary[["VaR 95% (daily) %", "CVaR 95% (daily) %"]].copy()
     st.dataframe(show_risk.sort_values("CVaR 95% (daily) %"), use_container_width=True)
@@ -417,7 +422,6 @@ with tab4:
         w_df = pd.DataFrame({"Asset": mean.index, "Weight %": (best_w * 100).round(2)}).sort_values("Weight %", ascending=False)
         st.dataframe(w_df, use_container_width=True)
 
-        # Stress test (simple, judge-friendly)
         st.subheader("Stress Test (simple scenario)")
         st.caption("Assumes a shock on benchmark (TASI). Estimates impact based on Beta (if available).")
         shock = st.slider("Benchmark shock (%)", -15, 0, -5, 1)
