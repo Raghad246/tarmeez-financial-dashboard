@@ -158,7 +158,7 @@ def safe_beta_alpha(asset_ret: pd.Series, bench_ret: pd.Series):
     cov_ab = float(np.cov(a, b, ddof=1)[0, 1])
     beta = cov_ab / var_b
 
-    # alpha (annualized): alpha_daily = mean(a) - beta*mean(b)
+    # alpha (annualized)
     alpha_daily = float(a.mean() - beta * b.mean())
     alpha_ann = alpha_daily * 252 * 100
 
@@ -173,14 +173,11 @@ def safe_beta_alpha(asset_ret: pd.Series, bench_ret: pd.Series):
 latest_prices = prices.iloc[-1]
 avg_latest_price = float(latest_prices.dropna().mean()) if latest_prices.dropna().shape[0] else np.nan
 total_volume = float(df["Volume"].dropna().sum())
-
 period_label = f"{prices.index.min().date()} → {prices.index.max().date()}"
 
 # Core metrics
 total_return_pct = (prices.iloc[-1] / prices.iloc[0] - 1) * 100
-ann_return_pct = (1 + returns.mean()) ** 252 - 1
-ann_return_pct = ann_return_pct * 100
-
+ann_return_pct = ((1 + returns.mean()) ** 252 - 1) * 100
 volatility_pct = returns.std() * np.sqrt(252) * 100
 
 cum = (1 + returns).cumprod()
@@ -244,7 +241,7 @@ k4.metric("Period", period_label)
 st.divider()
 
 # -----------------------------
-# Tabs
+# Tabs (Clean)
 # -----------------------------
 tab_overview, tab_perf, tab_risk = st.tabs(["Overview", "Performance", "Risk"])
 
@@ -334,19 +331,7 @@ with tab_risk:
         fig_dd = px.bar(dd_plot, x="Asset", y="Max Drawdown %", title="Maximum Drawdown")
         st.plotly_chart(fig_dd, use_container_width=True)
 
-    st.subheader(f"Rolling Volatility ({roll_window}d)")
-    if returns.shape[0] <= roll_window + 2:
-        st.info("Not enough data to compute rolling volatility for the selected range. Try a longer range.")
-    else:
-        roll_vol = returns.rolling(roll_window).std() * np.sqrt(252) * 100
-        roll_vol = roll_vol.dropna(how="all")
-
-        if roll_vol.empty:
-            st.info("Rolling volatility not available for this range.")
-        else:
-            fig_rv = px.line(roll_vol, title="")
-            fig_rv.update_layout(legend_title_text="Asset")
-            st.plotly_chart(fig_rv, use_container_width=True)
+    # ✅ Rolling Volatility REMOVED بالكامل (عشان ما يطلع تنبيه نقص البيانات)
 
     st.subheader("Correlation Heatmap (Returns)")
     corr = returns.corr()
