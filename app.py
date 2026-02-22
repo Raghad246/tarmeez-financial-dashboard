@@ -16,9 +16,7 @@ st.set_page_config(
 )
 
 st.title("📈 Saudi Market Snapshot (TASI) — Executive Financial Dashboard")
-st.caption(
-    "Live, decision-ready market analytics powered by Yahoo Finance. Built for assessment."
-)
+st.caption("Live, decision-ready market analytics powered by Yahoo Finance. Built for assessment.")
 
 # -----------------------------
 # Sidebar
@@ -68,9 +66,7 @@ else:
 end_date = st.sidebar.date_input("End date", today)
 
 st.sidebar.divider()
-
 risk_free = st.sidebar.slider("Risk-free rate (annual, %)", 0.0, 10.0, 4.0, 0.25)
-roll_window = st.sidebar.slider("Rolling window (days)", 10, 90, 30, 5)
 
 # Validation
 if not selected_assets:
@@ -133,7 +129,6 @@ prices = (
       .dropna(how="all")
 )
 
-# Need enough points for returns
 if prices.shape[0] < 3:
     st.warning("Not enough data points to compute returns. Try a longer range.")
     st.stop()
@@ -143,7 +138,6 @@ returns = prices.pct_change().dropna(how="all")
 bench_name = "TASI Index (Benchmark)" if "TASI Index (Benchmark)" in prices.columns else None
 
 def safe_beta_alpha(asset_ret: pd.Series, bench_ret: pd.Series):
-    """Return (beta, alpha_ann, excess_return_pct) safely."""
     aligned = pd.concat([asset_ret, bench_ret], axis=1, join="inner").dropna()
     if aligned.shape[0] < 5:
         return (np.nan, np.nan, np.nan)
@@ -156,18 +150,16 @@ def safe_beta_alpha(asset_ret: pd.Series, bench_ret: pd.Series):
         return (np.nan, np.nan, np.nan)
 
     cov_ab = float(np.cov(a, b, ddof=1)[0, 1])
-    beta = cov_ab / var_b
+    beta_val = cov_ab / var_b
 
-    # alpha (annualized)
-    alpha_daily = float(a.mean() - beta * b.mean())
+    alpha_daily = float(a.mean() - beta_val * b.mean())
     alpha_ann = alpha_daily * 252 * 100
 
-    # Excess return vs benchmark (period)
     asset_total = (1 + a).prod() - 1
     bench_total = (1 + b).prod() - 1
     excess = (asset_total - bench_total) * 100
 
-    return (beta, alpha_ann, excess)
+    return (beta_val, alpha_ann, excess)
 
 # KPIs
 latest_prices = prices.iloc[-1]
@@ -175,7 +167,7 @@ avg_latest_price = float(latest_prices.dropna().mean()) if latest_prices.dropna(
 total_volume = float(df["Volume"].dropna().sum())
 period_label = f"{prices.index.min().date()} → {prices.index.max().date()}"
 
-# Core metrics
+# Metrics
 total_return_pct = (prices.iloc[-1] / prices.iloc[0] - 1) * 100
 ann_return_pct = ((1 + returns.mean()) ** 252 - 1) * 100
 volatility_pct = returns.std() * np.sqrt(252) * 100
@@ -184,12 +176,10 @@ cum = (1 + returns).cumprod()
 dd = (cum / cum.cummax() - 1) * 100
 max_drawdown_pct = dd.min()
 
-# Sharpe (annualized) using risk-free
 rf_daily = (risk_free / 100) / 252
 excess_daily = returns.sub(rf_daily)
 sharpe_ann = (excess_daily.mean() / excess_daily.std()) * np.sqrt(252)
 
-# Beta/Alpha vs TASI (if available)
 beta = pd.Series(index=prices.columns, dtype="float64")
 alpha_ann = pd.Series(index=prices.columns, dtype="float64")
 excess_vs_tasi = pd.Series(index=prices.columns, dtype="float64")
@@ -222,15 +212,15 @@ summary = summary.replace([np.inf, -np.inf], np.nan)
 normalized = prices.div(prices.iloc[0]).mul(100)
 
 # -----------------------------
-# Top KPI Cards
+# KPI Cards
 # -----------------------------
 chip1, chip2, chip3 = st.columns([1, 1, 1])
 with chip1:
     st.markdown(f"**Risk-free:** {risk_free:.2f}%")
 with chip2:
-    st.markdown(f"**Rolling window:** {roll_window}d")
-with chip3:
     st.markdown(f"**Range:** {preset}")
+with chip3:
+    st.markdown(f"**Benchmark:** {'TASI' if bench_name else '—'}")
 
 k1, k2, k3, k4 = st.columns(4)
 k1.metric("Assets Selected", int(len(selected_assets)))
@@ -282,8 +272,8 @@ with tab_overview:
     if bench_name is not None:
         show_cols += ["Beta vs TASI", "Alpha (ann) %", "Excess Return vs TASI %"]
 
-    snap = summary[show_cols].copy()
-    snap = snap.round(2).reset_index().rename(columns={"index": "Asset"})
+    snap = summary[show_cols].copy().round(2)
+    snap = snap.reset_index().rename(columns={"index": "Asset"})
     st.dataframe(snap, use_container_width=True, hide_index=True)
 
 # -------- Performance --------
@@ -293,26 +283,10 @@ with tab_perf:
     fig_norm.update_layout(legend_title_text="Asset")
     st.plotly_chart(fig_norm, use_container_width=True)
 
-    st.subheader(f"Rolling Sharpe ({roll_window}d)")
-    if returns.shape[0] <= roll_window + 2:
-        st.info("Not enough data to compute rolling Sharpe for the selected range. Try a longer range.")
-    else:
-        roll_mean = returns.rolling(roll_window).mean()
-        roll_std = returns.rolling(roll_window).std()
-        roll_excess = roll_mean - rf_daily
-        roll_sharpe = (roll_excess / roll_std) * np.sqrt(252)
-        roll_sharpe = roll_sharpe.dropna(how="all")
-
-        if roll_sharpe.empty:
-            st.info("Rolling Sharpe not available for this range.")
-        else:
-            fig_rs = px.line(roll_sharpe, title="")
-            fig_rs.update_layout(legend_title_text="Asset")
-            st.plotly_chart(fig_rs, use_container_width=True)
-
     st.subheader("Performance Summary (Top)")
     perf_tbl = summary[["Total Return %", "Annual Return %", "Sharpe (ann)", "Latest Price"]].copy()
-    perf_tbl = perf_tbl.sort_values("Total Return %", ascending=False).round(2).reset_index().rename(columns={"index": "Asset"})
+    perf_tbl = perf_tbl.sort_values("Total Return %", ascending=False).round(2)
+    perf_tbl = perf_tbl.reset_index().rename(columns={"index": "Asset"})
     st.dataframe(perf_tbl, use_container_width=True, hide_index=True)
 
 # -------- Risk --------
@@ -331,24 +305,15 @@ with tab_risk:
         fig_dd = px.bar(dd_plot, x="Asset", y="Max Drawdown %", title="Maximum Drawdown")
         st.plotly_chart(fig_dd, use_container_width=True)
 
-    # ✅ Rolling Volatility REMOVED بالكامل (عشان ما يطلع تنبيه نقص البيانات)
-
     st.subheader("Correlation Heatmap (Returns)")
     corr = returns.corr()
-    if corr.isna().all().all():
-        st.info("Correlation not available for this range.")
-    else:
-        z = corr.values
-        x = corr.columns.tolist()
-        y = corr.index.tolist()
-
+    if not corr.empty and not corr.isna().all().all():
         fig_corr = go.Figure(
             data=go.Heatmap(
-                z=z,
-                x=x,
-                y=y,
-                zmin=-1,
-                zmax=1,
+                z=corr.values,
+                x=corr.columns.tolist(),
+                y=corr.index.tolist(),
+                zmin=-1, zmax=1,
                 hovertemplate="X: %{x}<br>Y: %{y}<br>Corr: %{z:.2f}<extra></extra>",
             )
         )
